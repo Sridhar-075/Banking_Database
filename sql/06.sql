@@ -186,3 +186,7 @@ CREATE TYPE account_type_enum AS ENUM (
 );
 ALTER TABLE account
 ADD COLUMN account_type account_type_enum NOT NULL DEFAULT 'Savings';
+
+ALTER TABLE bank_transaction
+ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'successful'
+CHECK (status IN ('successful', 'failed'));

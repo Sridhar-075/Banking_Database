@@ -1,6 +1,7 @@
+from decimal import Decimal
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AccountType(str, Enum):
@@ -14,3 +15,9 @@ class AccountCreate(BaseModel):
     account_type: AccountType
 
 
+class TransferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_account: int = Field(gt=0)
+    destination_account: int = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
