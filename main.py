@@ -89,7 +89,7 @@ from psycopg import errors
 from schemas import TransferRequest
 
 
-@app.post("/transfer", status_code=status.HTTP_201_CREATED)
+@app.post("/account/transfer", status_code=status.HTTP_201_CREATED)
 def transfer_money(transfer: TransferRequest, request:Request):     
     source = transfer.source_account
     destination = transfer.destination_account
