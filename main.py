@@ -88,7 +88,7 @@ def create_account(account: AccountCreate,request:Request):
 from fastapi import HTTPException, status
 from psycopg import errors
 
-from schemas import TransferRequest
+from schemas import TransferRequest, DepositRequest, WithdrawRequest
 
 
 @app.post("/account/transfer", status_code=status.HTTP_201_CREATED)
@@ -415,3 +415,234 @@ def create_loan(data: LoanCreate, request: Request):
         "emi_amount": emi,
         "next_payment_due": add_months(date.today(),1)
     }
+
+@app.post("/account/deposit", status_code=status.HTTP_201_CREATED)
+def deposit_money(deposit: DepositRequest, request: Request):
+    account_no = deposit.account_no
+    amount = deposit.amount
+
+    try:
+        with request.app.state.pool.connection() as conn:
+            with conn.cursor() as cur:
+                # Lock the account row for update
+                cur.execute(
+                    """
+                    SELECT account_no, balance, status
+                    FROM account
+                    WHERE account_no = %s
+                    FOR UPDATE
+                    """,
+                    (account_no,),
+                )
+
+                account = cur.fetchone()
+
+                if not account:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Account not found",
+                    )
+
+                if account["status"] != "active":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Account is not active",
+                    )
+
+                # Update the account balance
+                cur.execute(
+                    """
+                    UPDATE account
+                    SET balance = balance + %s
+                    WHERE account_no = %s
+                    RETURNING balance
+                    """,
+                    (amount, account_no),
+                )
+
+                updated_account = cur.fetchone()
+                new_balance = updated_account["balance"]
+
+                # Record parent bank_transaction
+                cur.execute(
+                    """
+                    INSERT INTO bank_transaction
+                        (transaction_type, amount, description, status)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING transaction_id, transaction_time
+                    """,
+                    (
+                        "deposit",
+                        amount,
+                        f"Deposit into account {account_no}",
+                        "successful",
+                    ),
+                )
+
+                transaction = cur.fetchone()
+                transaction_id = transaction["transaction_id"]
+
+                # Record credit entry in transaction_entry
+                cur.execute(
+                    """
+                    INSERT INTO transaction_entry
+                        (transaction_id, account_no, entry_type, amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (transaction_id, account_no, "credit", amount),
+                )
+
+            return {
+                "message": "Deposit successful",
+                "transaction_id": transaction_id,
+                "account_no": account_no,
+                "amount": amount,
+                "balance": new_balance,
+                "transaction_time": transaction["transaction_time"],
+            }
+
+    except HTTPException:
+        raise
+
+    except errors.DeadlockDetected:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Transaction conflicted with another operation. Please retry.",
+        )
+
+    except psycopg.Error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Deposit failed",
+        )
+
+
+@app.post("/account/withdraw", status_code=status.HTTP_201_CREATED)
+def withdraw_money(withdraw: WithdrawRequest, request: Request):
+    account_no = withdraw.account_no
+    amount = withdraw.amount
+
+    try:
+        with request.app.state.pool.connection() as conn:
+            with conn.cursor() as cur:
+                # Lock the account row for update
+                cur.execute(
+                    """
+                    SELECT account_no, balance, status
+                    FROM account
+                    WHERE account_no = %s
+                    FOR UPDATE
+                    """,
+                    (account_no,),
+                )
+
+                account = cur.fetchone()
+
+                if not account:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Account not found",
+                    )
+
+                if account["status"] != "active":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Account is not active",
+                    )
+
+                if account["balance"] < amount:
+                    # Record failed transaction in transaction history
+                    cur.execute(
+                        """
+                        INSERT INTO bank_transaction
+                            (transaction_type, amount, description, status)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING transaction_id, transaction_time
+                        """,
+                        (
+                            "withdrawal",
+                            amount,
+                            f"Failed withdrawal from account {account_no}: insufficient balance",
+                            "failed",
+                        ),
+                    )
+
+                    failed_transaction = cur.fetchone()
+
+                    return {
+                        "message": "Withdrawal failed",
+                        "transaction_id": failed_transaction["transaction_id"],
+                        "status": "failed",
+                        "reason": "Insufficient balance",
+                        "account_no": account_no,
+                        "amount": amount,
+                        "balance": account["balance"],
+                        "transaction_time": failed_transaction["transaction_time"],
+                    }
+
+                # Debit the account balance
+                cur.execute(
+                    """
+                    UPDATE account
+                    SET balance = balance - %s
+                    WHERE account_no = %s
+                    RETURNING balance
+                    """,
+                    (amount, account_no),
+                )
+
+                updated_account = cur.fetchone()
+                new_balance = updated_account["balance"]
+
+                # Record parent bank_transaction
+                cur.execute(
+                    """
+                    INSERT INTO bank_transaction
+                        (transaction_type, amount, description, status)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING transaction_id, transaction_time
+                    """,
+                    (
+                        "withdrawal",
+                        amount,
+                        f"Withdrawal from account {account_no}",
+                        "successful",
+                    ),
+                )
+
+                transaction = cur.fetchone()
+                transaction_id = transaction["transaction_id"]
+
+                # Record debit entry in transaction_entry
+                cur.execute(
+                    """
+                    INSERT INTO transaction_entry
+                        (transaction_id, account_no, entry_type, amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (transaction_id, account_no, "debit", amount),
+                )
+
+            return {
+                "message": "Withdrawal successful",
+                "transaction_id": transaction_id,
+                "account_no": account_no,
+                "amount": amount,
+                "balance": new_balance,
+                "transaction_time": transaction["transaction_time"],
+            }
+
+    except HTTPException:
+        raise
+
+    except errors.DeadlockDetected:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Transaction conflicted with another operation. Please retry.",
+        )
+
+    except psycopg.Error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Withdrawal failed",
+        )

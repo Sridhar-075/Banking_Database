@@ -45,3 +45,16 @@ class LoanRepaymentCreate(BaseModel):
         max_digits=14,
         decimal_places=2
     )
+
+class DepositRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_no: int = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+
+
+class WithdrawRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_no: int = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
