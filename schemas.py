@@ -21,3 +21,27 @@ class TransferRequest(BaseModel):
     source_account: int = Field(gt=0)
     destination_account: int = Field(gt=0)
     amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+
+class LoanCreate(BaseModel):
+    customer_id: int = Field(gt=0)
+    disbursement_account: int = Field(gt=0)
+    loan_type_id: int = Field(gt=0)
+
+    principal_amount: Decimal = Field(
+        gt=0,
+        max_digits=14,
+        decimal_places=2
+    )
+
+    tenure_months: int = Field(gt=0, le=600)
+    # first_payment_date: date
+
+
+class LoanRepaymentCreate(BaseModel):
+    
+    loan_id :int = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        max_digits=14,
+        decimal_places=2
+    )
