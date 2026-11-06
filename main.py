@@ -56,6 +56,19 @@ def create_account(account: AccountCreate,request:Request):
     try:
         with request.app.state.pool.connection() as conn:
             with conn.cursor() as cur:
+                past_account = cur.execute(
+                        """
+        select * from account where customer_id=%s and account_type=%s;
+            """,
+            (account.customer_id,account.account_type.value)
+
+                )
+                if past_account:
+                    raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Customer already has a {account.account_type.value} account.",
+                            )
+
                 cur.execute(
                     """
                     INSERT INTO account (customer_id, branch_id, account_type)
