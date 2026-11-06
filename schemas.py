@@ -39,7 +39,7 @@ class LoanCreate(BaseModel):
 
 class LoanRepaymentCreate(BaseModel):
     
-    loan_id :int = Field(gt=0)
+ 
     amount: Decimal = Field(
         gt=0,
         max_digits=14,

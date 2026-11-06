@@ -7,7 +7,7 @@ from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
 from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate
-from tools import calculate_emi,add_months
+from tools import calculate_emi,add_months, money
 
 
 
@@ -646,3 +646,268 @@ def withdraw_money(withdraw: WithdrawRequest, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Withdrawal failed",
         )
+
+@app.post("/loan/repay/{loan_id}")
+def repay_loan(
+    loan_id: int,
+    data: LoanRepaymentCreate,
+    request: Request
+):
+
+    pool = request.app.state.pool
+
+    with pool.connection() as conn:
+        with conn.transaction():
+
+            # 1. Lock and fetch the loan
+            loan = conn.execute(
+                """
+                SELECT *
+                FROM loan_account
+                WHERE loan_id = %s
+                FOR UPDATE
+                """,
+                (loan_id,)
+            ).fetchone()
+            
+            if not loan:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Loan not found"
+                )
+
+            if loan["status"] != "ACTIVE":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Loan is not active"
+                )
+            today = conn.execute(
+                "SELECT CURRENT_DATE AS today"
+            ).fetchone()["today"]
+
+            if today < loan["next_payment_due"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Next installment is due on {loan['next_payment_due']}. Early repayment is not allowed."
+                )
+            # # 2. Fetch and lock the repayment account
+            account = conn.execute(
+                """
+                SELECT account_no, customer_id, balance, status
+                FROM account
+                WHERE account_no = %s
+                FOR UPDATE
+                """,
+                (loan['disbursement_account'],)
+            ).fetchone()
+
+            # if not account:
+            #     raise HTTPException(
+            #         status_code=404,
+            #         detail="Repayment account not found"
+            #     )
+
+            # if account["customer_id"] != loan["customer_id"]:
+            #     raise HTTPException(
+            #         status_code=403,
+            #         detail="Repayment account does not belong to loan customer"
+            #     )
+
+            # if str(account["status"]).lower() != "active":
+            #     raise HTTPException(
+            #         status_code=400,
+            #         detail="Repayment account is not active"
+            #     )
+
+            # 3. Get current loan information
+            outstanding = Decimal(
+                str(loan["principal_outstanding"])
+            )
+
+            monthly_rate = Decimal(
+                str(loan["interest_rate_monthly"])
+            )
+
+            emi = Decimal(str(loan["emi_amount"]))
+
+            installment_number = loan["next_installment_number"]
+            payment_due = loan["next_payment_due"]
+
+            if installment_number > loan["tenure_months"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Loan has exhausted its repayment tenure"
+                )
+
+            # 4. Calculate the current installment's interest
+            interest_due = money(outstanding * monthly_rate)
+
+            # Total amount needed to close the loan today
+            payoff_amount = money(outstanding + interest_due)
+
+            # The final scheduled installment clears the entire balance.
+            if installment_number == loan["tenure_months"]:
+                installment_due = payoff_amount
+            else:
+                installment_due = min(emi, payoff_amount)
+
+            payment_amount = money(data.amount)
+
+            # 5. Validate repayment amount
+            if payment_amount < installment_due:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Minimum payment required is {installment_due}"
+                )
+
+            if payment_amount > payoff_amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum payoff amount is {payoff_amount}"
+                )
+
+            # 6. Check account balance
+            balance = Decimal(str(account["balance"]))
+
+            if balance < payment_amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Insufficient account balance"
+                )
+
+            # 7. Calculate interest and principal components
+            interest_paid = interest_due
+
+            # Includes scheduled principal + extra principal
+            principal_paid = money(
+                payment_amount - interest_paid
+            )
+
+            new_outstanding = money(
+                outstanding - principal_paid
+            )
+
+            # 8. Determine loan status
+            is_closed = new_outstanding == Decimal("0.00")
+
+            next_installment_number = installment_number + 1
+
+            if is_closed:
+                new_status = "CLOSED"
+                next_payment_due = None
+            else:
+                new_status = "ACTIVE"
+
+                next_payment_due = add_months(
+                    loan["first_payment_date"],
+                    next_installment_number - 1
+                )
+
+            # 9. Create bank transaction
+            transaction = conn.execute(
+                """
+                INSERT INTO bank_transaction
+                    (amount, transaction_type, transaction_time, description)
+                VALUES
+                    (%s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING transaction_id
+                """,
+                (
+                    payment_amount,
+                    "loan_repayment",
+                    f"Repayment for loan {loan_id}, installment {installment_number}"
+                )
+            ).fetchone()
+
+            transaction_id = transaction["transaction_id"]
+
+            # 10. Deduct amount from customer's bank account
+            conn.execute(
+                """
+                UPDATE account
+                SET balance = balance - %s
+                WHERE account_no = %s
+                """,
+                (
+                    payment_amount,
+                    loan['disbursement_account']
+                )
+            )
+
+            # Record debit entry
+            conn.execute(
+                """
+                INSERT INTO transaction_entry
+                    (transaction_id, account_no, entry_type, amount)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    transaction_id,
+                   loan['disbursement_account'],
+                    "debit",
+                    payment_amount
+                )
+            )
+
+            # 11. Insert loan repayment history
+            repayment = conn.execute(
+                """
+                INSERT INTO loan_repayment (
+                    transaction_id,
+                    loan_id,
+                    installment_number,
+                    payment_date,
+                    payment_due,
+                    installment_due,
+                    interest_paid,
+                    principal_paid
+                )
+                VALUES (
+                    %s, %s, %s, CURRENT_DATE, %s, %s, %s, %s
+                )
+                RETURNING repayment_id
+                """,
+                (
+                    transaction_id,
+                    loan_id,
+                    installment_number,
+                    payment_due,
+                    installment_due,
+                    interest_paid,
+                    principal_paid
+                )
+            ).fetchone()
+
+            # 12. Update outstanding principal and next installment
+            conn.execute(
+                """
+                UPDATE loan_account
+                SET principal_outstanding = %s,
+                    next_installment_number = %s,
+                    next_payment_due = %s,
+                    status = %s
+                WHERE loan_id = %s
+                """,
+                (
+                    new_outstanding,
+                    next_installment_number,
+                    next_payment_due,
+                    new_status,
+                    loan_id
+                )
+            )
+
+    return {
+        "message": "Loan repayment successful",
+        "transaction_id": transaction_id,
+        "repayment_id": repayment["repayment_id"],
+        "installment_number": installment_number,
+        "installment_due": installment_due,
+        "amount_paid": payment_amount,
+        "interest_paid": interest_paid,
+        "principal_paid": principal_paid,
+        "previous_outstanding": outstanding,
+        "new_outstanding": new_outstanding,
+        "loan_status": new_status,
+        "next_payment_due": next_payment_due
+    }
