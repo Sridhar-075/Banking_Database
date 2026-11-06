@@ -211,3 +211,7 @@ UNIQUE (loan_id, installment_number);
 ALTER TABLE loan_repayment
 ADD CONSTRAINT uq_repayment_transaction
 UNIQUE (transaction_id);
+
+alter table account
+add constraint uq_customer_accounttype
+UNIQUE(customer_id,account_type);
