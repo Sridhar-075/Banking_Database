@@ -772,12 +772,11 @@ def repay_loan(
                     status_code=400,
                     detail=f"Minimum payment required is {installment_due}"
                 )
-
+            refund_needed=False
+            refund=0
             if payment_amount > payoff_amount:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Maximum payoff amount is {payoff_amount}"
-                )
+                refund_needed=True
+                refund = payment_amount-payoff_amount
 
             # 6. Check account balance
             balance = Decimal(str(account["balance"]))
@@ -792,13 +791,17 @@ def repay_loan(
             interest_paid = interest_due
 
             # Includes scheduled principal + extra principal
-            principal_paid = money(
-                payment_amount - interest_paid
-            )
+            if refund_needed:
+                principal_paid=outstanding
+                new_outstanding=0
+            else:  
+                principal_paid = money(
+                    payment_amount - interest_paid
+                )
 
-            new_outstanding = money(
-                outstanding - principal_paid
-            )
+                new_outstanding = money(
+                    outstanding - principal_paid
+                )
 
             # 8. Determine loan status
             is_closed = new_outstanding == Decimal("0.00")
@@ -861,7 +864,42 @@ def repay_loan(
                     payment_amount
                 )
             )
+            if refund_needed:
+                refund_transaction = conn.execute(
+                    """
+            INSERT INTO bank_transaction
+                                (amount, transaction_type, transaction_time, description)
+                            VALUES
+                                (%s, %s, CURRENT_TIMESTAMP, %s)
+                            RETURNING transaction_id
 
+                """,
+                (refund,"deposit",f"Bank Refund for loan {loan_id}")
+                ).fetchone()
+                conn.execute(
+                        """
+                        UPDATE account
+                        SET balance = balance + %s
+                        WHERE account_no = %s
+                        """,
+                        (
+                            refund,
+                            loan['disbursement_account']
+                        )
+                            )
+                conn.execute(
+                        """
+                        INSERT INTO transaction_entry
+                            (transaction_id, account_no, entry_type, amount)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            refund_transaction["transaction_id"],
+                            loan['disbursement_account'],
+                            "credit",
+                            refund
+                        )
+                            )
             # 11. Insert loan repayment history
             repayment = conn.execute(
                 """
@@ -921,6 +959,7 @@ def repay_loan(
         "principal_paid": principal_paid,
         "previous_outstanding": outstanding,
         "new_outstanding": new_outstanding,
+        "amount_refund":refund,
         "loan_status": new_status,
         "next_payment_due": next_payment_due
     }
