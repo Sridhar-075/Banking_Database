@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoginRequest, MyAccount
+from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoginRequest, MyAccount
 from tools import calculate_emi,add_months, money
 
 
@@ -712,6 +712,55 @@ def withdraw_money(withdraw: WithdrawRequest, request: Request):
             detail="Withdrawal failed",
         )
 
+@app.get("/loans/{id}")
+def list_loans(id:int, request:Request):
+    
+    try:
+        with request.app.state.pool.connection() as conn:
+            with conn.cursor() as cur:
+                loans = cur.execute("""
+                select customer_id,disbursement_account,principal_amount,principal_outstanding,interest_rate_monthly,tenure_months,emi_amount,status,first_payment_date,next_installment_number,next_payment_due,loan_id from loan_account where customer_id=%s
+                """,(id,)).fetchall()
+                return loans
+
+    except psycopg.Error:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch loans",
+            )
+
+@app.get(
+    "/loans/{customer_id}/{loan_id}/repayments",
+    response_model=list[LoanRepaymentResponse]
+)
+def get_loan_repayments(
+    customer_id: int,
+    loan_id: int,
+    request: Request
+):
+    with request.app.state.pool.connection() as conn:
+
+        repayments = conn.execute(
+            """
+            SELECT
+                lr.repayment_id,
+                lr.transaction_id,
+                lr.installment_number,
+                lr.payment_date,
+                lr.payment_due,
+                lr.interest_paid,
+                lr.principal_paid
+            FROM loan_repayment lr
+            JOIN loan_account la
+                ON lr.loan_id = la.loan_id
+            WHERE la.customer_id = %s
+              AND la.loan_id = %s
+            ORDER BY lr.installment_number DESC;
+            """,
+            (customer_id, loan_id)
+        ).fetchall()
+
+        return repayments
 @app.post("/loan/repay/{loan_id}")
 def repay_loan(
     loan_id: int,

@@ -49,6 +49,28 @@ class LoanCreate(BaseModel):
     # first_payment_date: date
 
 
+class LoanList(BaseModel):
+    customer_id:int
+    loan_id:int
+    disbursement_account:int
+    principal_amount:float
+    principal_outstanding:float
+    interest_rate_monthly:float
+    tenure_months:int
+    emi_amount:float
+    status:str
+    first_payment_date:date
+    next_installment_number:int
+    next_payment_due:date
+
+class LoanRepaymentResponse(BaseModel):
+    repayment_id: int
+    transaction_id: int
+    installment_number: int
+    payment_date: date
+    payment_due: date
+    interest_paid: float
+    principal_paid: float
 class LoanRepaymentCreate(BaseModel):
     
  
