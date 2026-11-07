@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoginRequest, MyAccount
+from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
 from tools import calculate_emi,add_months, money
 
 
@@ -317,6 +317,18 @@ def transfer_money(transfer: TransferRequest, request:Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transfer failed",
         )
+
+@app.get("/loan/types",response_model=list[LoanTypes])
+def get_loan_types(request:Request):
+    pool = request.app.state.pool
+    with pool.connection() as conn:
+        with conn.transaction():
+            types=conn.execute("""
+            select * from loan_type;
+            """).fetchall()
+            return types
+    
+
 
 @app.post("/loan/create", status_code=status.HTTP_201_CREATED)
 def create_loan(data: LoanCreate, request: Request):

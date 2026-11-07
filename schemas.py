@@ -71,6 +71,12 @@ class LoanRepaymentResponse(BaseModel):
     payment_due: date
     interest_paid: float
     principal_paid: float
+
+class LoanTypes(BaseModel):
+    id:int
+    category:str
+    interest_rate:float
+ 
 class LoanRepaymentCreate(BaseModel):
     
  
