@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from decimal import Decimal
 from datetime import date
 import psycopg
@@ -6,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate
+from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoginRequest, MyAccount
 from tools import calculate_emi,add_months, money
 
 
@@ -33,7 +34,43 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],        
+    allow_headers=["*"],
+)
 
+@app.post("/auth/login",tags=["Authentication"])
+def login(data: LoginRequest, request: Request):
+
+    pool = request.app.state.pool
+
+    with pool.connection() as conn:
+
+        customer = conn.execute(
+            """
+            SELECT id, name
+            FROM customer
+            WHERE id = %s
+            """,
+            (data.customer_id,)
+        ).fetchone()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+    return {
+        "message": "Login successful",
+        "customer": {
+            "id": customer["id"],
+            "name": customer["name"]
+        }
+    }
 
 @app.get("/customers")
 def get_customers(request: Request):
@@ -50,6 +87,21 @@ def get_customers(request: Request):
             status_code=500,
             detail="Failed to fetch customers",
         )
+
+@app.get("/accounts/{id}",response_model=list[MyAccount])
+def get_accounts(id:int,request:Request):
+    try:
+        with request.app.state.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT account_no, account_type,balance,branch_id,opened_on,status from account where customer_id=%s",(id,))
+                rows=cur.fetchall()
+        return rows
+    except psycopg.Error:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch accounts",
+            )
+
 
 @app.post("/account/create", status_code=status.HTTP_201_CREATED)
 def create_account(account: AccountCreate,request:Request):
@@ -963,3 +1015,36 @@ def repay_loan(
         "loan_status": new_status,
         "next_payment_due": next_payment_due
     }
+
+
+@app.get("/transactions/{customer_id}")
+def get_transactions(customer_id: int, request: Request):
+
+    with request.app.state.pool.connection() as conn:
+
+        transactions = conn.execute(
+            """
+            SELECT
+                bt.transaction_id,
+                bt.transaction_time,
+                bt.transaction_type,
+                bt.description,
+                te.entry_type,
+                te.amount,
+                te.account_no AS account_number
+
+            FROM bank_transaction bt
+
+            JOIN transaction_entry te
+                ON bt.transaction_id = te.transaction_id
+
+            JOIN account a
+                ON te.account_no = a.account_no
+
+            WHERE a.customer_id = %s
+
+            ORDER BY bt.transaction_time DESC;
+            """,
+            (customer_id,)
+        ).fetchall()
+    return transactions

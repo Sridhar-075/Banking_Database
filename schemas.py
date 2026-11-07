@@ -1,7 +1,11 @@
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+class LoginRequest(BaseModel):
+    customer_id: int
 
 
 class AccountType(str, Enum):
@@ -13,6 +17,14 @@ class AccountCreate(BaseModel):
     customer_id: int
     branch_id: int
     account_type: AccountType
+
+class MyAccount(BaseModel):
+    account_number: int = Field(validation_alias="account_no")
+    account_type:str
+    balance:float
+    branch_id: int
+    opened_on:date 
+    status:str
 
 
 class TransferRequest(BaseModel):
