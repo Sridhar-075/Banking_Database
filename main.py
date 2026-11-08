@@ -114,7 +114,7 @@ def create_account(account: AccountCreate,request:Request):
             """,
             (account.customer_id,account.account_type.value)
 
-                )
+                ).fetchone()
                 if past_account:
                     raise HTTPException(
                                 status_code=status.HTTP_400_BAD_REQUEST,
