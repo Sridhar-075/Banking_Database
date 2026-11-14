@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate, Branches,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
+from schemas import AccountCreate, Branches,LoanCreate, LoanList,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
 from tools import calculate_emi,add_months, money
 
 
@@ -724,14 +724,14 @@ def withdraw_money(withdraw: WithdrawRequest, request: Request):
             detail="Withdrawal failed",
         )
 
-@app.get("/loans/{id}")
+@app.get("/loans/{id}",response_model=list[LoanList])
 def list_loans(id:int, request:Request):
     
     try:
         with request.app.state.pool.connection() as conn:
             with conn.cursor() as cur:
                 loans = cur.execute("""
-                select customer_id,disbursement_account,principal_amount,principal_outstanding,interest_rate_monthly,tenure_months,emi_amount,status,first_payment_date,next_installment_number,next_payment_due,loan_id from loan_account where customer_id=%s
+                select customer_id,disbursement_account,principal_amount,principal_outstanding,interest_rate_monthly,tenure_months,emi_amount,status,first_payment_date,next_installment_number,next_payment_due,loan_id,category from loan_account inner join loan_type on loan_account.loan_id=loan_type.id where customer_id=%s
                 """,(id,)).fetchall()
                 return loans
 

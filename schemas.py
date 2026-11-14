@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,7 +62,8 @@ class LoanList(BaseModel):
     status:str
     first_payment_date:date
     next_installment_number:int
-    next_payment_due:date
+    next_payment_due:Optional[date] = None
+    category:str
 
 class LoanRepaymentResponse(BaseModel):
     repayment_id: int
