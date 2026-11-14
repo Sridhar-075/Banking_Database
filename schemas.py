@@ -105,3 +105,8 @@ class WithdrawRequest(BaseModel):
 class Branches(BaseModel):
     id:int = Field(gt=0)
     name:str
+
+class addLoanType(BaseModel):
+    category:str
+    interest_rate:float
+
