@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate, Branches,LoanCreate, LoanList,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
+from schemas import AccountCreate, Branches,LoanCreate, LoanList,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount, addLoanType
 from tools import calculate_emi,add_months, money
 
 
@@ -1128,4 +1128,25 @@ def get_branches(request:Request):
     
 
 
-    
+@app.post("/loan_type/add")
+def add_loan_type(request:Request,
+                  data: addLoanType
+                  ):
+    try:
+        with request.app.state.pool.connection() as conn:
+            loan = conn.execute("""
+            insert into loan_type (category,interest_rate) values (%s,%s) returning id;
+            """,
+            (data.category,data.interest_rate)
+            ).fetchone()
+            return {
+                "loan_type_id":loan["id"],
+                "category":data.category,
+                "interest rate": data.interest_rate 
+            }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error while adding loan type: {str(e)}"
+        )
