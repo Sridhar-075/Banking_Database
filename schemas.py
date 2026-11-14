@@ -98,3 +98,8 @@ class WithdrawRequest(BaseModel):
 
     account_no: int = Field(gt=0)
     amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+
+
+class Branches(BaseModel):
+    id:int = Field(gt=0)
+    name:str
