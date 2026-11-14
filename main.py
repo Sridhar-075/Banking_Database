@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg import errors
 from fastapi import FastAPI, HTTPException, Request,status
-from schemas import AccountCreate,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
+from schemas import AccountCreate, Branches,LoanCreate,LoanRepaymentCreate, LoanRepaymentResponse, LoanTypes, LoginRequest, MyAccount
 from tools import calculate_emi,add_months, money
 
 
@@ -1109,3 +1109,23 @@ def get_transactions(customer_id: int, request: Request):
             (customer_id,)
         ).fetchall()
     return transactions
+
+@app.get("/branches/",response_model=list[Branches])
+def get_branches(request:Request):
+    
+    try:
+        with request.app.state.pool.connection() as conn:
+            branches = conn.execute("""
+                    select * from branch;
+                """).fetchall()
+            return branches
+
+    except psycopg.Error:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch branches",
+            )
+    
+
+
+    
