@@ -731,7 +731,7 @@ def list_loans(id:int, request:Request):
         with request.app.state.pool.connection() as conn:
             with conn.cursor() as cur:
                 loans = cur.execute("""
-                select customer_id,disbursement_account,principal_amount,principal_outstanding,interest_rate_monthly,tenure_months,emi_amount,status,first_payment_date,next_installment_number,next_payment_due,loan_id,category from loan_account inner join loan_type on loan_account.loan_id=loan_type.id where customer_id=%s
+                select customer_id,disbursement_account,principal_amount,principal_outstanding,interest_rate_monthly,tenure_months,emi_amount,status,first_payment_date,next_installment_number,next_payment_due,loan_id,category from loan_account inner join loan_type on loan_account.loan_type_id=loan_type.id where customer_id=%s
                 """,(id,)).fetchall()
                 return loans
 
